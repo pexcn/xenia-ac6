@@ -81,12 +81,8 @@ void DxbcShaderTranslator::ProcessVertexFetchInstruction(
         dxbc::Src index_operand(
             LoadOperand(instr.operands[0], 0b0001, index_operand_temp_pushed)
                 .SelectFromSwizzled(0));
-        if (instr.attributes.is_index_rounded) {
-          a_.OpAdd(address_dest, index_operand, dxbc::Src::LF(0.5f));
-          a_.OpRoundNI(address_dest, address_src);
-        } else {
-          a_.OpRoundNI(address_dest, index_operand);
-        }
+        a_.OpAdd(address_dest, index_operand, dxbc::Src::LF(0.005f));
+        a_.OpRoundNI(address_dest, address_src);
         if (index_operand_temp_pushed) {
           PopSystemTemp();
         }
