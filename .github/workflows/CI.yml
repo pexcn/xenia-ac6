@@ -1,0 +1,109 @@
+name: CI
+
+on:
+  push:
+    paths-ignore:
+      - '.clang-format'
+      - '.drone.star'
+      - '.gitattributes'
+      - '.gitignore'
+      - '.gdbinit'
+      - '.github/*'
+      - '.github/*_TEMPLATE/**'
+      - '*.md'
+      - '*.yml'
+      - 'docs/**'
+      - 'src/**/*_posix.*'
+      - 'src/**/*_linux.*'
+      - 'src/**/*_gnulinux.*'
+      - 'src/**/*_x11.*'
+      - 'src/**/*_gtk.*'
+      - 'src/**/*_android.*'
+      - 'src/**/*_mac.*'
+      - 'LICENSE'
+      - 'README.md'
+  pull_request:
+    paths-ignore:
+      - '.clang-format'
+      - '.drone.star'
+      - '.gitattributes'
+      - '.gitignore'
+      - '.gdbinit'
+      - '.github/*'
+      - '.github/*_TEMPLATE/**'
+      - '*.md'
+      - '*.yml'
+      - 'docs/**'
+      - 'src/**/*_posix.*'
+      - 'src/**/*_linux.*'
+      - 'src/**/*_gnulinux.*'
+      - 'src/**/*_x11.*'
+      - 'src/**/*_gtk.*'
+      - 'src/**/*_android.*'
+      - 'src/**/*_mac.*'
+      - 'LICENSE'
+      - 'README.md'
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    name: Build (Windows, ${{ matrix.config.vsver }}) #  runner.os can't be used here
+    runs-on: ${{ matrix.config.runs-on }}
+    env:
+      POWERSHELL_TELEMETRY_OPTOUT: 1
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - {vsver: VS2022, runs-on: windows-latest}
+          - {vsver: VS2019, runs-on: windows-2019}
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      - name: Setup
+        run: .\xb setup
+      - name: Build
+        run: .\xb build --config=Release --target=src\xenia-app --target=src\xenia-vfs-dump
+      - name: Prepare artifacts
+        run: |
+          robocopy . build\bin\${{ runner.os }}\Release                                                                LICENSE /r:0 /w:0
+          robocopy   build\bin\${{ runner.os }}\Release artifacts\xenia   xenia.exe   xenia.pdb   LICENSE /r:0 /w:0
+          robocopy   build\bin\${{ runner.os }}\Release artifacts\xenia-vfs-dump xenia-vfs-dump.exe xenia-vfs-dump.pdb LICENSE /r:0 /w:0
+          If ($LastExitCode -le 7) { echo "LastExitCode = $LastExitCode";$LastExitCode = 0 }
+      - name: Upload xenia-vfs-dump artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: xenia-vfs-dump_${{ matrix.config.vsver }}
+          path: artifacts\xenia-vfs-dump
+          if-no-files-found: error
+      - name: Upload xenia artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: xenia_${{ matrix.config.vsver }}
+          path: artifacts\xenia
+          if-no-files-found: error
+      - name: Create release
+        if: |
+          matrix.config.runs-on == 'windows-2019' &&
+          github.event.action != 'pull_request' &&
+          contains(github.ref, 'refs/heads/master')
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $asset="xenia.zip"
+          rm -recurse -force artifacts\xenia\*.pdb # Ideally this would use xr, but I can't get it to work
+          7z a $asset .\artifacts\xenia\*
+          If ($(Get-Item $asset).length -le 100000) {
+            Throw "Error: Archive $asset too small!"
+          }
+          $tag=$env:GITHUB_SHA.SubString(0,7)
+          $branch=$($env:GITHUB_REF -replace 'refs/heads/')
+          $title="${tag}_$branch"
+          gh release create $tag $asset --target $env:GITHUB_SHA -t $title
+          # Remove master_ to prevent conflicts from tag
+          $tag=$($branch -replace 'master_')
+          gh release delete $tag -y
+          git push --delete origin $tag
+          git tag -d $tag
+          gh release create $tag $asset --target $env:GITHUB_SHA -t $branch
